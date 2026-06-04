@@ -1,0 +1,17 @@
+# Build output
+Debug/
+Release/
+*.o
+*.d
+*.elf
+*.map
+*.hex
+*.bin
+*.lst
+
+# .project
+# .cproject
+# .settings/
+
+# macOS
+.DS_Store
