@@ -28,6 +28,7 @@
 /* USER CODE BEGIN Includes */
 #include <math.h>
 #include <stdio.h>
+#include <string.h>
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -35,6 +36,7 @@
 #define FIR_NUM_TAPS 80
 #define POLYPHASE_TAPS 20
 #define UPSAMPLE_FACTOR 4
+#define DOWNSAMPLE_FACTOR 4
 
 typedef struct _Biquad {
 	float b0, b1, b2;
@@ -54,6 +56,12 @@ typedef struct _FIR_Polyphase {
   float state[POLYPHASE_TAPS];
   size_t currIndex;
 } FIR_Polyphase;
+
+typedef struct _FIR_Polyphase_Decim {
+  float phase[DOWNSAMPLE_FACTOR][POLYPHASE_TAPS];
+  float state[DOWNSAMPLE_FACTOR][POLYPHASE_TAPS];
+  size_t currIndex;
+} FIR_Polyphase_Decim;
 
 /* USER CODE END PTD */
 
@@ -167,12 +175,17 @@ const float h_coeffs[FIR_NUM_TAPS] = {
 FIR_Polyphase interpolationFilter = {
   .state = {0.0f},
   .currIndex = 0
-}; 
+};
+FIR_Polyphase_Decim decimationFilter = {
+  .state = {{0.0f}},
+  .currIndex = 0
+};
 float processInputBuffer[BUFFER_SIZE] = {0.0f};
 float processOutputBuffer[BUFFER_SIZE] = {0.0f};
+
+float oversampledInputBuffer[UPSAMPLE_BUFFER_SIZE] = {0.0f};
 float oversampledOutputBuffer[UPSAMPLE_BUFFER_SIZE] = {0.0f};
-uint16_t sine_lut[256];
-volatile uint16_t adc_buffer[ BUFFER_SIZE * 2 ];
+volatile uint16_t adc_buffer[ UPSAMPLE_BUFFER_SIZE * 2 ] = { 0 };
 volatile uint16_t out_buffer[ UPSAMPLE_BUFFER_SIZE * 2 ] = { 0 };
 volatile uint16_t pot_params[3] = { 0 };
 
@@ -231,15 +244,18 @@ int main(void)
         interpolationFilter.phase[p][k] = h_coeffs[UPSAMPLE_FACTOR * k + p];
     }
   }
-  HAL_ADC_Start_DMA( &hadc1, (uint32_t*)adc_buffer, BUFFER_SIZE * 2 );
+  for(int p = 0; p < DOWNSAMPLE_FACTOR; ++p) {
+    for(int k = 0; k < POLYPHASE_TAPS; ++k) {
+        decimationFilter.phase[p][k] = h_coeffs[DOWNSAMPLE_FACTOR * k + p];
+    }
+  }
   HAL_ADC_Start_DMA( &hadc2, (uint32_t*)pot_params, 3 );
+  HAL_ADC_Start_DMA( &hadc1, (uint32_t*)adc_buffer, UPSAMPLE_BUFFER_SIZE * 2 );
   HAL_DAC_Start_DMA( &hdac, DAC_CHANNEL_1,
   		  (uint32_t*)out_buffer, UPSAMPLE_BUFFER_SIZE * 2, DAC_ALIGN_12B_R );
 
   HAL_TIM_Base_Start( &htim2 ); //ADC timer
   HAL_TIM_Base_Start( &htim3 ); //Potentiometer polling timer
-  HAL_TIM_Base_Start( &htim6 ); //DAC timer
-
 
   /* USER CODE END 2 */
 
@@ -247,8 +263,6 @@ int main(void)
   /* USER CODE BEGIN WHILE */
   while (1)
   {
-	  //HAL_GPIO_TogglePin(GPIOA, GPIO_PIN_5);
-	  //HAL_Delay(500);
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
@@ -321,7 +335,7 @@ void HAL_ADC_ConvHalfCpltCallback( ADC_HandleTypeDef *hadc ) {
 }
 void HAL_ADC_ConvCpltCallback( ADC_HandleTypeDef *hadc ) {
 	if( hadc == &hadc1 ) {
-		process_block( &adc_buffer[ BUFFER_SIZE ], &out_buffer[ UPSAMPLE_BUFFER_SIZE ] );
+		process_block( &adc_buffer[ UPSAMPLE_BUFFER_SIZE ], &out_buffer[ UPSAMPLE_BUFFER_SIZE ] );
 	} else if ( hadc == &hadc2 ) {
 		HAL_ADC_Start_DMA( &hadc2, (uint32_t*)pot_params, 3 );
 	}
@@ -331,12 +345,39 @@ void HAL_ADC_ConvCpltCallback( ADC_HandleTypeDef *hadc ) {
 void process_block( uint16_t *input_buffer, uint16_t *output_buffer ) {
 
   HAL_GPIO_WritePin(GPIOA, GPIO_PIN_0, GPIO_PIN_SET);
-	
-	for(int i = 0; i < BUFFER_SIZE; ++i) {
-		processOutputBuffer[i] = (input_buffer[i] - 2048) / 2048.0f;
+
+	for(int i = 0; i < UPSAMPLE_BUFFER_SIZE; ++i) {
+		oversampledInputBuffer[i] = (input_buffer[i] - 2048) / 2048.0f;
 	}
-  
-  // memcpy(processOutputBuffer, processInputBuffer, BUFFER_SIZE * sizeof(float));
+
+  /**
+   * Decimate from 48kHz * DOWNSAMPLE_FACTOR down to 48kHz,
+   * using polyphase decimation (79 + 1 zero-pad)-tap FIR filter.
+   */
+  for(int i = 0; i < BUFFER_SIZE; ++i) {
+
+    for(int j = 0; j < DOWNSAMPLE_FACTOR; ++j) {
+      decimationFilter.state[j][decimationFilter.currIndex] =
+          oversampledInputBuffer[DOWNSAMPLE_FACTOR * i + (DOWNSAMPLE_FACTOR - 1 - j)];
+    }
+
+    float result = 0.0f;
+    for(int j = 0; j < DOWNSAMPLE_FACTOR; ++j) {
+      size_t tapIndex = decimationFilter.currIndex;
+      for(int k = 0; k < POLYPHASE_TAPS; ++k) {
+        result += decimationFilter.phase[j][k] * decimationFilter.state[j][tapIndex];
+        if(tapIndex == 0) tapIndex = POLYPHASE_TAPS - 1;
+        else tapIndex--;
+      }
+    }
+    processInputBuffer[i] = result;
+
+    if(decimationFilter.currIndex == POLYPHASE_TAPS - 1) decimationFilter.currIndex = 0;
+    else decimationFilter.currIndex++;
+
+  }
+
+  memcpy(processOutputBuffer, processInputBuffer, BUFFER_SIZE * sizeof(float));
   /* for(int i = 0; i < BUFFER_SIZE; ++i)
   {
     processOutputBuffer[i] = 
