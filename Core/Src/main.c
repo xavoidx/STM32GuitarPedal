@@ -29,6 +29,7 @@
 #include <math.h>
 #include <stdio.h>
 #include <string.h>
+#include "ola.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -180,6 +181,7 @@ FIR_Polyphase_Decim decimationFilter = {
   .state = {{0.0f}},
   .currIndex = 0
 };
+OLA_State s;
 float processInputBuffer[BUFFER_SIZE] = {0.0f};
 float processOutputBuffer[BUFFER_SIZE] = {0.0f};
 
@@ -249,6 +251,8 @@ int main(void)
         decimationFilter.phase[p][k] = h_coeffs[DOWNSAMPLE_FACTOR * k + p];
     }
   }
+  OLA_Init(&s);
+
   HAL_ADC_Start_DMA( &hadc2, (uint32_t*)pot_params, 3 );
   HAL_ADC_Start_DMA( &hadc1, (uint32_t*)adc_buffer, UPSAMPLE_BUFFER_SIZE * 2 );
   HAL_DAC_Start_DMA( &hdac, DAC_CHANNEL_1,
@@ -330,8 +334,6 @@ void HAL_ADC_ConvHalfCpltCallback( ADC_HandleTypeDef *hadc ) {
 	if( hadc == &hadc1 ) {
 		process_block( &adc_buffer[0], &out_buffer[0] );
 	}
-
-
 }
 void HAL_ADC_ConvCpltCallback( ADC_HandleTypeDef *hadc ) {
 	if( hadc == &hadc1 ) {
@@ -339,7 +341,6 @@ void HAL_ADC_ConvCpltCallback( ADC_HandleTypeDef *hadc ) {
 	} else if ( hadc == &hadc2 ) {
 		HAL_ADC_Start_DMA( &hadc2, (uint32_t*)pot_params, 3 );
 	}
-
 }
 
 void process_block( uint16_t *input_buffer, uint16_t *output_buffer ) {
@@ -377,7 +378,7 @@ void process_block( uint16_t *input_buffer, uint16_t *output_buffer ) {
 
   }
 
-  memcpy(processOutputBuffer, processInputBuffer, BUFFER_SIZE * sizeof(float));
+  OLA_Process(&s, processInputBuffer, processOutputBuffer, BUFFER_SIZE);
   /* for(int i = 0; i < BUFFER_SIZE; ++i)
   {
     processOutputBuffer[i] = 
