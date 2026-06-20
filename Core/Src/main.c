@@ -378,7 +378,7 @@ void process_block( uint16_t *input_buffer, uint16_t *output_buffer ) {
 
   }
 
-  OLA_Process(&s, processInputBuffer, processOutputBuffer, BUFFER_SIZE);
+  //OLA_Process(&s, processInputBuffer, processOutputBuffer, BUFFER_SIZE);
   /* for(int i = 0; i < BUFFER_SIZE; ++i)
   {
     processOutputBuffer[i] = 
