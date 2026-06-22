@@ -13,6 +13,7 @@ void OLA_Init(OLA_State *s) {
     s->out_read = OLA_OUT_SIZE - OLA_W;
 }
 
+__attribute__((optimize("fast-math")))
 void OLA_Process(OLA_State* s, float* input_buffer, float* output_buffer, size_t buffer_size) {
 
     // Push the new block into the input ring buffer.
@@ -22,60 +23,105 @@ void OLA_Process(OLA_State* s, float* input_buffer, float* output_buffer, size_t
         if(s->in_write >= OLA_IN_SIZE) s->in_write = 0; 
     }
     s->in_count += buffer_size;  
-
+  
     // Fire one analysis frame for every SA samples accumulated.
     while(s->in_count >= OLA_SA) {
-        
-        /**
-         * Precompute sqrt(sum(tail[i]^2)), 
-         * first iteration of sqrt(sum(cand[i]^2)),
-         */ 
-        float sqrt_sum_tail_squared = 0.0f;
-        float sum_cand_squared = 0.0f;
-        float sum_cand_times_tail = 0.0f;
 
-        for(int i = 0; i < OLA_L; ++i) {
-            size_t out_scan_idx = (s->out_write + i) % OLA_OUT_SIZE;
-            size_t in_scan_idx = (s->in_write + i - OLA_W - OLA_LAG + OLA_IN_SIZE) % OLA_IN_SIZE;
-            sum_cand_squared += square(s->in_buffer[in_scan_idx]);
-            sqrt_sum_tail_squared += square(s->out_buffer[out_scan_idx]);
-            sum_cand_times_tail += s->in_buffer[in_scan_idx] * s->out_buffer[out_scan_idx]; 
+        // #4: hoist the read-only input ring into a restrict-qualified local.
+        //     in_buffer is only WRITTEN in the push loop above, never inside
+        //     this search, so restrict is valid and lets the compiler assume
+        //     it never aliases the out_buffer writes. in_write is fixed for the
+        //     whole frame; out_write only changes at the end, so cache both.
+        const float * restrict in = s->in_buffer;
+        const size_t in_write  = s->in_write;
+        const size_t out_write = s->out_write;
+
+        // #4: cache the output tail ONCE. It is identical for every lag, so this
+        //     kills the per-lag modulo on out_buffer and reads it contiguously
+        //     in the hot loop. static => not on the ISR stack (OLA_Process runs
+        //     in the DMA callback; non-reentrant, so a shared scratch is fine).
+        static float tail[OLA_L];
+        for(size_t j = 0; j < OLA_L; ++j) {
+            tail[j] = s->out_buffer[(out_write + j) % OLA_OUT_SIZE];
         }
-        sqrt_sum_tail_squared = sqrtf(sqrt_sum_tail_squared); //Compute once
 
-        float max_correlation = sum_cand_times_tail / 
-            (sqrtf(sum_cand_squared) * sqrt_sum_tail_squared + 1e-12f);
-        int max_correlation_offset = -OLA_LAG;
+        // #3: ||tail|| is gone. The search maximizes cross/(||cand||*||tail||),
+        //     and ||tail|| is constant across lags, so it cancels from every
+        //     comparison. Track the winner as the (cross, ||cand||^2) pair and
+        //     defer the sqrt/divide entirely. (No 1e-12 guard needed anymore.)
+        float sum_cand_squared = 0.0f;   // running ||cand||^2 of the current lag
+        float best_cross   = 0.0f;       // cross-correlation of the best lag
+        float best_cand_sq = 0.0f;       // ||cand||^2 of the best lag
 
-        for(int i = -OLA_LAG + 1; i <= OLA_LAG; ++i) {
-            float curr_correlation = 0.0f;
-            sum_cand_times_tail = 0.0f;
+        // Seed from the first lag (-OLA_LAG).
+        for(size_t j = 0; j < OLA_L; ++j) {
+            float c = in[(in_write + j - OLA_W - OLA_LAG + OLA_IN_SIZE) % OLA_IN_SIZE];
+            sum_cand_squared += c * c;
+            best_cross       += c * tail[j];   // tail from cache, no modulo
+        }
+        best_cand_sq = sum_cand_squared;
+        int max_course_correlation_offset = -OLA_LAG;
 
-            sum_cand_squared -= square(s->in_buffer[(s->in_write + i - 1 - OLA_W + OLA_IN_SIZE) % OLA_IN_SIZE]);
-            sum_cand_squared += square(s->in_buffer[(s->in_write + i + OLA_L - 1 - OLA_W + OLA_IN_SIZE) % OLA_IN_SIZE]);
-                
-            //Recompute sum_cand_times_tail
+        for(int i = -OLA_LAG + 1; i <= OLA_LAG; i += 4) {
+
+            // slide ||cand||^2: drop old leading edge, add new trailing edge
+            sum_cand_squared -= square(in[(in_write + i - 1         - OLA_W + OLA_IN_SIZE) % OLA_IN_SIZE]);
+            sum_cand_squared += square(in[(in_write + i + OLA_L - 1 - OLA_W + OLA_IN_SIZE) % OLA_IN_SIZE]);
+
+            // full cross-correlation against the cached (contiguous) tail
+            float cross = 0.0f;
             for(size_t j = 0; j < OLA_L; ++j) {
-                size_t out_scan_idx = (s->out_write + j) % OLA_OUT_SIZE;
-                size_t in_scan_idx = (s->in_write + i + j - OLA_W + OLA_IN_SIZE) % OLA_IN_SIZE;
-                sum_cand_times_tail += s->in_buffer[in_scan_idx] * s->out_buffer[out_scan_idx]; 
+                cross += in[(in_write + i + j - OLA_W + OLA_IN_SIZE) % OLA_IN_SIZE] * tail[j];
             }
-            
-            curr_correlation = sum_cand_times_tail / 
-            (sqrtf(sum_cand_squared) * sqrt_sum_tail_squared + 1e-12f);
-            
-            if(curr_correlation > max_correlation) { 
-                max_correlation = curr_correlation;
-                max_correlation_offset = i; 
-            }
-        } 
 
-        for(size_t i = 0; i < OLA_W; ++i) {
-            size_t src = (s->in_write + max_correlation_offset - OLA_W + i + OLA_IN_SIZE) % OLA_IN_SIZE;
-            size_t dst = (s->out_write + i) % OLA_OUT_SIZE;
-            s->out_buffer[dst] += s->in_buffer[src] * s->hann[i];
+            // #3: compare cross/sqrt(cand_sq) WITHOUT sqrt or divide.
+            //     for positives:  a/sqrt(p) > b/sqrt(q)  <=>  a^2 * q > b^2 * p
+            //     a non-positive cross is anti-correlation: never a good seam,
+            //     so it can't beat a positive best.
+            int better;
+            if(cross <= 0.0f)           better = 0;
+            else if(best_cross <= 0.0f) better = 1;   // any positive beats non-positive
+            else better = (cross * cross * best_cand_sq) >
+                          (best_cross * best_cross * sum_cand_squared);
+
+            if(better) {
+                best_cross   = cross;
+                best_cand_sq = sum_cand_squared;
+                max_course_correlation_offset = i;
+            }
         }
-        s->out_write = (s->out_write + OLA_SS) % OLA_OUT_SIZE;
+
+        //fine search
+        int max_fine_correlation_offset = 0;
+        for(int i = max_course_correlation_offset - 4; i <= max_course_correlation_offset + 4 ; ++i) {
+
+            sum_cand_squared -= square(in[(in_write + i - 1         - OLA_W + OLA_IN_SIZE) % OLA_IN_SIZE]);
+            sum_cand_squared += square(in[(in_write + i + OLA_L - 1 - OLA_W + OLA_IN_SIZE) % OLA_IN_SIZE]);
+
+            float cross = 0.0f;
+            for(size_t j = 0; j < OLA_L; ++j) {
+                cross += in[(in_write + i + j - OLA_W + OLA_IN_SIZE) % OLA_IN_SIZE] * tail[j];
+            }
+            int better;
+            if(cross <= 0.0f)           better = 0;
+            else if(best_cross <= 0.0f) better = 1;   // any positive beats non-positive
+            else better = (cross * cross * best_cand_sq) >
+                          (best_cross * best_cross * sum_cand_squared);
+
+            if(better) {
+                best_cross   = cross;
+                best_cand_sq = sum_cand_squared;
+                max_fine_correlation_offset = i;
+            }
+        }
+        // overlap-add the best-matching frame. Writes out_buffer (not in_buffer),
+        // so the restrict qualifier on `in` is not violated.
+        for(size_t i = 0; i < OLA_W; ++i) {
+            size_t src = (in_write + max_fine_correlation_offset - OLA_W + i + OLA_IN_SIZE) % OLA_IN_SIZE;
+            size_t dst = (out_write + i) % OLA_OUT_SIZE;
+            s->out_buffer[dst] += in[src] * s->hann[i];
+        }
+        s->out_write = (out_write + OLA_SS) % OLA_OUT_SIZE;
         s->in_count -= OLA_SA;
     }
 

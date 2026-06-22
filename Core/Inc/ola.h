@@ -9,8 +9,8 @@
 #define OLA_SS       512    // synthesis hop (output advances by this, = W/2 for COLA)
 #define OLA_IN_SIZE  2048   // input ring buf  (2×W)
 #define OLA_OUT_SIZE 4096   // output ring buf (4×W, pre-decimation)
-#define OLA_L OLA_SS        // correlation length (tail of output is Ss)
-#define OLA_LAG      300    // Search correlation windows +-OLA_LAG from in_write
+#define OLA_L ( OLA_SS / 4 )       // correlation length (tail of output is Ss)
+#define OLA_LAG      150    // Search correlation windows +-OLA_LAG from in_write
 
 typedef struct _OLA_State {
     float in_buffer[OLA_IN_SIZE];
