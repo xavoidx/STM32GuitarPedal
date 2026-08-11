@@ -31,6 +31,7 @@
 #include <string.h>
 #include "ola.h"
 #include "arm_math.h"
+#include "phase_vocoder.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -39,6 +40,7 @@
 #define POLYPHASE_TAPS 20
 #define UPSAMPLE_FACTOR 4
 #define DOWNSAMPLE_FACTOR 4
+//#define WSOLA
 
 typedef struct _Biquad
 {
@@ -181,7 +183,11 @@ const float h_interpolation_coeffs[FIR_NUM_TAPS] = {
     -0.0068717977f, -0.0083051317f, -0.0050027479f, -5.8945254e-18f,
     0.0036200963f, 0.0043743064f, 0.0026668202f, 3.6395969e-18f,
     -0.0020915779f, -0.0027304836f, -0.0018468027f, 0.0f};
-OLA_State s;
+#ifdef WSOLA  
+    OLA_State s;
+#else
+  Phase_Vocoder pv;
+#endif
 float processInputBuffer[BUFFER_SIZE] = {0.0f};
 float processOutputBuffer[BUFFER_SIZE] = {0.0f};
 
@@ -192,7 +198,8 @@ float oversampledInputBuffer[UPSAMPLE_BUFFER_SIZE] = {0.0f};
 float oversampledOutputBuffer[UPSAMPLE_BUFFER_SIZE] = {0.0f};
 volatile uint16_t adc_buffer[UPSAMPLE_BUFFER_SIZE * 2] = {0};
 volatile uint16_t out_buffer[UPSAMPLE_BUFFER_SIZE * 2] = {0};
-volatile uint16_t pot_params[3] = {0};
+volatile uint16_t pot_params = 0; /* Dry/Wet potentiometer reading */
+float dry_wet = 0.f;
 
 /* USER CODE END PV */
 
@@ -244,7 +251,11 @@ int main(void)
   MX_TIM3_Init();
   MX_TIM6_Init();
   /* USER CODE BEGIN 2 */
+#ifdef WSOLA  
   OLA_Init(&s);
+#else
+  pv_init(&pv);
+#endif
   if (arm_fir_decimate_init_f32(&decim, FIR_NUM_TAPS, DOWNSAMPLE_FACTOR,
                                 h_decimation_coeffs, decim_state, UPSAMPLE_BUFFER_SIZE) != ARM_MATH_SUCCESS)
     Error_Handler();
@@ -252,7 +263,7 @@ int main(void)
                                    h_interpolation_coeffs, interp_state, BUFFER_SIZE) != ARM_MATH_SUCCESS)
     Error_Handler();
 
-  HAL_ADC_Start_DMA(&hadc2, (uint32_t *)pot_params, 3);
+  HAL_ADC_Start_DMA(&hadc2, (uint32_t *)&pot_params, 1);
   HAL_ADC_Start_DMA(&hadc1, (uint32_t *)adc_buffer, UPSAMPLE_BUFFER_SIZE * 2);
   HAL_DAC_Start_DMA(&hdac, DAC_CHANNEL_1,
                     (uint32_t *)out_buffer, UPSAMPLE_BUFFER_SIZE * 2, DAC_ALIGN_12B_R);
@@ -342,7 +353,8 @@ void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef *hadc)
   }
   else if (hadc == &hadc2)
   {
-    HAL_ADC_Start_DMA(&hadc2, (uint32_t *)pot_params, 3);
+    dry_wet = pot_params / 4096.0f;
+    HAL_ADC_Start_DMA(&hadc2, (uint32_t *)&pot_params, 1);
   }
 }
 
@@ -359,25 +371,15 @@ void process_block(uint16_t *input_buffer, uint16_t *output_buffer)
   HAL_GPIO_WritePin(GPIOA, GPIO_PIN_2, GPIO_PIN_SET);
   arm_fir_decimate_f32(&decim, oversampledInputBuffer, processInputBuffer, UPSAMPLE_BUFFER_SIZE);
   HAL_GPIO_WritePin(GPIOA, GPIO_PIN_2, GPIO_PIN_RESET);
-
- HAL_GPIO_WritePin(GPIOA, GPIO_PIN_3, GPIO_PIN_SET);
-  OLA_Process(&s, processInputBuffer, processOutputBuffer, BUFFER_SIZE);
-  HAL_GPIO_WritePin(GPIOA, GPIO_PIN_3, GPIO_PIN_RESET);
-  /* for(int i = 0; i < BUFFER_SIZE; ++i)
-  {
-    processOutputBuffer[i] =
-        biquad.b0 * processInputBuffer[i]
-      + biquad.b1 * biquad.x1
-      + biquad.b2 * biquad.x2
-      - biquad.a1 * biquad.y1
-      - biquad.a2 * biquad.y2;
-
-    biquad.x2 = biquad.x1;
-    biquad.x1 = processInputBuffer[i];
-    biquad.y2 = biquad.y1;
-    biquad.y1 = processOutputBuffer[i];
-  } */
-
+  #ifdef WSOLA
+    OLA_Process(&s, processInputBuffer, processOutputBuffer, BUFFER_SIZE);
+  #else
+    pv_process(&pv, processInputBuffer, processOutputBuffer, BUFFER_SIZE);
+  #endif
+  /*for(size_t i; i < BUFFER_SIZE; ++i) {
+    processOutputBuffer[i] = dry_wet * processOutputBuffer[i] + (1 - dry_wet) * processInputBuffer[i];
+  }*/
+  
   /**
    * Upsample to 48kHz * UPSAMPLE_FACTOR,
    * using polyphase interpolation (79 + 1 zero-pad)-tap FIR filter.
