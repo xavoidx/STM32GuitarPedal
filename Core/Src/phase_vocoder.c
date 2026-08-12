@@ -14,11 +14,6 @@ static const float phase_exp[8] = {
     7 * pi_f / 4
 };
 static const float e_floor = 1e-12;
-float princarg(float in) {
-    int div = (int) (in / (2 * pi_f) + 10.5f); 
-    div -= 10;
-    return in - (2 * pi_f * div);
-}
 void pv_init(Phase_Vocoder* pv) {
     memset(pv, 0, sizeof(*pv));
     for(size_t i = 0; i < PV_FRAME_SIZE; ++i) {
@@ -95,15 +90,16 @@ void pv_process(Phase_Vocoder* pv, const float* in, float* out, size_t buffer_si
         pv->fft_in[0] = pv->fft_out[0];
         pv->fft_in[1] = pv->fft_out[1];
         arm_rfft_fast_f32(&rfft, pv->fft_in, pv->fft_out, IRFFT);
-    
+        
+        /*Overlap-add @ intervals of H_s*/
         for(size_t i = 0; i < PV_FRAME_SIZE; ++i) {
             pv->out_buffer[(pv->out_wr + i) & (PV_OUT_SIZE - 1)] += pv->sine[i] * pv->fft_out[i];
         }
         pv->out_wr += H_s;
-        pv->in_count -= H_a;
-        pv->is_first = 0;
 
+        pv->in_count -= H_a;
     } 
+    /*Read samples at 2x rate*/
     for(size_t i = 0; i < buffer_size; ++i) {
         out[i] = pv->out_buffer[(pv->out_rd - 2 * H_s) & (PV_OUT_SIZE - 1)];
         pv->out_buffer[(pv->out_rd - 2 * H_s) & (PV_OUT_SIZE - 1)] = 0.f;

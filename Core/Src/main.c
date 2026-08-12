@@ -67,17 +67,6 @@ typedef struct _Biquad
 /* Private variables ---------------------------------------------------------*/
 
 /* USER CODE BEGIN PV */
-Biquad biquad = {
-    .b0 = 0.00391607f,
-    .b1 = 0.00783215f,
-    .b2 = 0.00391607f,
-    .a1 = -1.81531792f,
-    .a2 = 0.83098222f,
-    .x1 = 0.0f,
-    .x2 = 0.0f,
-    .y1 = 0.0f,
-    .y2 = 0.0f};
-
 static float decim_state[FIR_NUM_TAPS + UPSAMPLE_BUFFER_SIZE - 1];
 static float interp_state[FIR_NUM_TAPS / UPSAMPLE_FACTOR + BUFFER_SIZE - 1];
 
@@ -376,7 +365,6 @@ void process_block(uint16_t *input_buffer, uint16_t *output_buffer)
     //HAL_GPIO_WritePin(GPIOA, GPIO_PIN_0, GPIO_PIN_SET);
     pv_process(&pv, processInputBuffer, processOutputBuffer, BUFFER_SIZE);
     //HAL_GPIO_WritePin(GPIOA, GPIO_PIN_0, GPIO_PIN_RESET);
-
   #endif
   /*for(size_t i; i < BUFFER_SIZE; ++i) {
     processOutputBuffer[i] = dry_wet * processOutputBuffer[i] + (1 - dry_wet) * processInputBuffer[i];
