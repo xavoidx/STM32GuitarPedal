@@ -40,7 +40,7 @@
 #define POLYPHASE_TAPS 20
 #define UPSAMPLE_FACTOR 4
 #define DOWNSAMPLE_FACTOR 4
-//#define WSOLA
+#define WSOLA
 
 typedef struct _Biquad
 {
@@ -200,7 +200,6 @@ volatile uint16_t adc_buffer[UPSAMPLE_BUFFER_SIZE * 2] = {0};
 volatile uint16_t out_buffer[UPSAMPLE_BUFFER_SIZE * 2] = {0};
 volatile uint16_t pot_params = 0; /* Dry/Wet potentiometer reading */
 float dry_wet = 0.f;
-
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -374,7 +373,10 @@ void process_block(uint16_t *input_buffer, uint16_t *output_buffer)
   #ifdef WSOLA
     OLA_Process(&s, processInputBuffer, processOutputBuffer, BUFFER_SIZE);
   #else
+    //HAL_GPIO_WritePin(GPIOA, GPIO_PIN_0, GPIO_PIN_SET);
     pv_process(&pv, processInputBuffer, processOutputBuffer, BUFFER_SIZE);
+    //HAL_GPIO_WritePin(GPIOA, GPIO_PIN_0, GPIO_PIN_RESET);
+
   #endif
   /*for(size_t i; i < BUFFER_SIZE; ++i) {
     processOutputBuffer[i] = dry_wet * processOutputBuffer[i] + (1 - dry_wet) * processInputBuffer[i];

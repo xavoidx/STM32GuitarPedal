@@ -13,13 +13,13 @@
 #define IRFFT 0x01
 
 typedef struct {
-    float hann[PV_FRAME_SIZE]; 
+    float sine[PV_FRAME_SIZE]; 
     float phase_acc[PV_FRAME_SIZE];
     
     /*Ping pong buffers for spectral operations*/
     float fft_in[PV_FRAME_SIZE]; 
     float fft_out[PV_FRAME_SIZE];
-    float phase_prev[PV_FRAME_SIZE / 2];
+    float phase_prev[PV_FRAME_SIZE];
 
     float in_buffer[PV_IN_SIZE];
     float out_buffer[PV_OUT_SIZE];
@@ -27,6 +27,7 @@ typedef struct {
     size_t in_count;
     size_t out_wr;
     size_t out_rd;
+    unsigned int is_first;
 } Phase_Vocoder;
 
 void pv_init(Phase_Vocoder* pv);
