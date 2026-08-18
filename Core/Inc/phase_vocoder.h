@@ -19,7 +19,7 @@
 #define PV_OUT_SIZE (PV_FRAME_SIZE * 2)
 
 #define PV_TRANSIENT_MULT 6
-#define PV_TRANSIENT_FLOOR 100
+#define PV_TRANSIENT_FLOOR 50
 #define PV_FLUX_HISTORY_SIZE (1U << 4)
 
 #define RFFT 0x00

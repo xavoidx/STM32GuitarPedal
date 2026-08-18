@@ -40,7 +40,7 @@
 #define POLYPHASE_TAPS 20
 #define UPSAMPLE_FACTOR 4
 #define DOWNSAMPLE_FACTOR 4
-#define WSOLA
+//#define WSOLA
 
 typedef struct _Biquad
 {

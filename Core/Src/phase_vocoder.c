@@ -27,8 +27,10 @@ static int fcompare(const void* arg1, const void* arg2) {
 }
 
 static inline float pv_get_median(Phase_Vocoder* pv) {
-    qsort(pv->flux_history, PV_FLUX_HISTORY_SIZE, sizeof(*(pv->flux_history)), fcompare);
-    return pv->flux_history[PV_FLUX_HISTORY_SIZE / 2]; 
+    float flux_scratch[PV_FLUX_HISTORY_SIZE];
+    memcpy(flux_scratch, pv->flux_history, PV_FLUX_HISTORY_SIZE);
+    qsort(flux_scratch, PV_FLUX_HISTORY_SIZE, sizeof(*(flux_scratch)), fcompare);
+    return flux_scratch[PV_FLUX_HISTORY_SIZE / 2]; 
 } 
 
 __attribute__((optimize("fast-math")))
@@ -52,13 +54,11 @@ void pv_process(Phase_Vocoder* pv, const float* in, float* out, size_t buffer_si
 
         float flux = 0.f; 
         for(size_t i = 1; i < PV_FRAME_SIZE / 2; i++) {
-            
             float bin_magnitude = sqrtf(pv->fft_out[2 * i] * pv->fft_out[2 * i] + pv->fft_out[2 * i + 1] * pv->fft_out[2 * i + 1]);
             if(i > 4 /*Guard against energy spikes near DC*/) {
                 flux += fmaxf(bin_magnitude - pv->prev_magnitude[i], 0.f);
-                pv->prev_magnitude[i] = bin_magnitude;
             }
-
+            pv->prev_magnitude[i] = bin_magnitude;   
         }
         /**
          * Alias the prev_magnitude array for readability; 
@@ -68,12 +68,16 @@ void pv_process(Phase_Vocoder* pv, const float* in, float* out, size_t buffer_si
 
         if(flux > fmaxf(PV_TRANSIENT_MULT * pv_get_median(pv), PV_TRANSIENT_FLOOR)) {    
             /*Short-circuit input to output leaving phase unchanged*/
-            memcpy(pv->fft_in, pv->fft_out, PV_FRAME_SIZE);
+            memcpy(pv->fft_in, pv->fft_out, PV_FRAME_SIZE * sizeof(float));
 
             /*Reset phase accumulation to current phase*/
             for(size_t i = 1; i < PV_FRAME_SIZE / 2; i++) {
-                pv->phase_acc[2 * i] = pv->fft_out[2 * i] / curr_magnitude[i];
-                pv->phase_acc[2 * i + 1] = pv->fft_out[2 * i + 1] / curr_magnitude[i];
+                float mag_divisor = curr_magnitude[i] + e_floor;
+                pv->phase_acc[2 * i] = pv->fft_out[2 * i] * mag_divisor;
+                pv->phase_acc[2 * i + 1] = pv->fft_out[2 * i + 1] * mag_divisor;
+
+                pv->fft_prev[2 * i] = pv->fft_out[2 * i];
+                pv->fft_prev[2 * i + 1] = pv->fft_out[2 * i + 1];
             }
         }
         else {
