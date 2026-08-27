@@ -28,6 +28,8 @@ I also used REW's RTA with a ~1kHz sine (adjusted to land directly on an FFT bin
 ![B1](Measurements/THD+N_Breadboard_1.png)
 ![B2](Measurements/THD+N_Breadboard_2.png)
 
-# THD of Interface
+# THD+N of Interface
+
+Measuring the interface's noise floor is crucial for making sure the measurements of the guitar pedal aren't just the noise floor of the interface itself:
 
 ![InterfaceTHD](Measurements/THD+N_Interface.png)
