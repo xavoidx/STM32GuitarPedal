@@ -4,11 +4,17 @@ Pitch-shift guitar pedal on an STM32F446RE development board.
 
 ## Design Overview
 
-The pedal itself contains 2nd order analog Sallen-Key anti-aliasing and reconstruction filters for the ADC and DAC running at 192kHz. The I/O are downsampled/upsampled x4, meaning the processing is done at 48kHz. Interpolation and Decimation are done with the polyphase FIR filter functions from the CMSIS-DSP library. The board contains analog tone and volume pots, as well as a digital dry/wet knob. A standard 2x buffer with half-complete and full-complete DMA callbacks is used for processing.
+The pedal itself contains 2nd-order analog Sallen-Key anti-aliasing and reconstruction filters for the ADC and DAC running at 192kHz. The I/O are downsampled/upsampled x4, meaning the processing is done at 48kHz. This was done to be able to ease the requirements of the analog filters, reducing phase distortion by shifting the filtering responsibilities to digital FIRs. Therefore, the analog anti-aliasing and reconstruction filters need to only sufficiently liminate frequencies between 172kHz-192kHz, which are the aliased/imaged frequencies that land in the audio band. Interpolation and Decimation are done with the polyphase FIR filter functions from the CMSIS-DSP library. 
 
-The repo has two different implementations for the pitch shifter; a Phase Vocoder suited for polyphonic instruments, and a WSOLA approach suited for monophonic instruments. The phase vocoder was entirely written by me, whereas the WSOLA implementation had some major optimizations and improvements made by pairing with Claude. I was able to learn a lot of optimizations tricks/idioms from the LLM that were crucial for meeting the audio callback deadline--which is tight on the F446 (~5.33 ms with 256-sample buffer). The start and end of the callback toggle a GPIO pin on the board that can be monitored with a scope and allows gauging of callback headroom. 
+The breadboard version contains analog tone and volume pots, as well as a digital dry/wet knob, whereas the PCB version only has tone and dry/wet knobs. 
 
-It is living on a breadboard currently, but I am working on a simple PCB for it, as the breadboard is unsurprisingly noisy. 
+The repo has two different implementations for the pitch shifter; a Phase Vocoder suited for polyphonic instruments, and a WSOLA approach suited for monophonic instruments. The phase vocoder was entirely written by me, whereas the WSOLA implementation had some major optimizations and improvements made by pairing with Claude. I was able to learn a lot of optimizations tricks/idioms from the LLM that were crucial for meeting the audio callback deadline--which is tight on the F446 (~5.33 ms with 256-sample buffer). The start and end of the callback toggle a GPIO pin on the board that can be monitored with a scope and allows gauging of callback headroom. A standard 2x buffer with half-complete and full-complete DMA callbacks is used for processing.
+
+It is living on a breadboard currently, but I am working on a simple PCB for it, as the breadboard is unsurprisingly noisy. The THD+N of the entire chain on the breadboard can be found in MEASUREMENTS.md, and I will remeasure for comparison once the PCB arrives.
+
+*This was my first PCB build, thus I did not make a custom STM32 board. Wanted to keep it simple and just have female headers where the nucleo board can be inserted and taken out. I am aware that the PCB layout could be improved; saving these for a V2.*
+
+*The breadboard is using a cheap AMS1117 LDO, whereas the PCB is using an LT3042 which is significantly better*
 
 ## Two implementations of an octave-up pitch shifting algorithm
 
@@ -32,7 +38,7 @@ CMSIS_DSP is used here for efficient implementation of FFT.
 
 WSOLA, or 'Waveform Synchronous Overlap-Add", is a different approach to maintaining phase coherence that stays in the time domain. In the analysis phase, a small lag window is scanned for an analysis candidate that correlates the strongest with the tail of the synthesis buffer that the frame will be overlapped onto. The lag window needs to be wide enough to be able to find a sufficient candidate for low frequencies that have a large wavelength. 
 
-The problem with WSOLA is that the dominant period of the waveform will take precedence in the searching algorithm, thus making it best suited for monophonic instruments, as there will only be phase conherence for one dominant period. Longer lag windows can accomodate for simple dyad harmonic ratios like octaves, thirds, and fifths, as the total wavelength of these ratios are still relatively short, especially at higher pitches. But full chords sound warbly.
+The problem with WSOLA is that the dominant period of the waveform will take precedence in the searching algorithm, thus making it best suited for monophonic instruments, as there will only be phase conherence for one dominant period. Longer lag windows can accomodate for simple dyad harmonic ratios like octaves and fifths, as the total wavelength of these ratios are still relatively short, especially at higher pitches. But full chords sound warbly.
 
 The WSOLA implementation in this repo is able to search a fairly large lag window while healthily meeting the callback deadline. It gives very respectable performance on guitar, even during phrases with 2-3 notes playing at the same time.  
 
@@ -42,9 +48,12 @@ The WSOLA implementation in this repo is able to search a fairly large lag windo
 
 /Core/ -> Source files
 
-(TODO) /Demos/ -> Audio files demoing the algorithm through a guitar amp 
+/Demos/ -> Audio files demoing the algorithm through a guitar amp 
 
-(TODO) /Pics/ -> Pictures of the pedal in its breadboard form 
+/Pics/ -> Pictures of the pedal, KiCad schematic/pcb
 
-(TODO) /Measurements/
+/Measurements/ -> Measurements of THD+N as well as Sallen-Key performance, documented in MEASUREMENTS.md
 
+## Pictures
+![PCB Render](Pics/PCB_Render.png)
+![Breadboard](Pics/Breadboard.jpg)

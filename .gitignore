@@ -10,8 +10,13 @@ Release/
 *.lst
 
 # .project
-# .cproject
-# .settings/
+.cproject
+.osx.project
+.settings/
+.claude/
+.metadata/
+.vscode/
+GuitarPedal\ Debug\ (1).launch
 
 # macOS
 .DS_Store
