@@ -10,7 +10,6 @@ Release/
 *.lst
 
 # .project
-.cproject
 .osx.project
 .settings/
 .claude/
@@ -20,3 +19,6 @@ GuitarPedal\ Debug\ (1).launch
 
 # macOS
 .DS_Store
+
+# CubeMX internal state
+.mxproject
